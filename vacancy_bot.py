@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import sys
+from datetime import datetime
 import psycopg2
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -7,12 +9,23 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.middleware.types import MessageMiddlewareAnnotation
 import requests
+from requests.exceptions import RequestException, Timeout
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 import os
 from dotenv import load_dotenv
+
+# Настройка логирования в терминал
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%H:%M:%S',
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -33,6 +46,23 @@ HEADERS = {"User-Agent": "VacancyBotPro/1.0"}
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+
+# Простой декоратор для логирования сообщений
+def log_message(func):
+    async def wrapper(message: types.Message):
+        user = message.from_user
+        text = message.text[:50] if message.text else "non-text"
+        logger.info(f"📩 MSG | {user.full_name} (@{user.username or 'N/A'}) | {text}")
+        return await func(message)
+    return wrapper
+
+# Простой декоратор для логирования callback
+def log_callback(func):
+    async def wrapper(callback: types.CallbackQuery):
+        user = callback.from_user
+        logger.info(f"📲 CALLBACK | {user.full_name} (@{user.username or 'N/A'}) | {callback.data}")
+        return await func(callback)
+    return wrapper
 
 # PostgreSQL подключение
 def get_db_connection():
@@ -82,12 +112,14 @@ AREAS = {
 
 def parse_hh_vacancies(text, area=113, salary_from=None, salary_to=None, count=50):
     """HH.ru API"""
+    logger.info(f"→ HH.ru API request: text='{text}', area={area}")
+    
     params = {"text": text, "area": area, "per_page": min(count, 100)}
     if salary_from: params["salary_from"] = salary_from
     if salary_to: params["salary_to"] = salary_to
     
     try:
-        resp = requests.get(HH_API, params=params, headers=HEADERS)
+        resp = requests.get(HH_API, params=params, headers=HEADERS, timeout=30)
         data = resp.json()
         
         vacancies = []
@@ -122,11 +154,20 @@ def parse_hh_vacancies(text, area=113, salary_from=None, salary_to=None, count=5
                 "url": vac["alternate_url"]
             })
         return pd.DataFrame(vacancies)
-    except:
-        return pd.DataFrame()
+    except Timeout:
+        logger.error(f"❌ HH.ru TIMEOUT | text='{text}'")
+        raise TimeoutError("Превышен таймаут при запросе к HH.ru. Попробуйте позже.")
+    except RequestException as e:
+        logger.error(f"❌ HH.ru ERROR | {e}")
+        raise ConnectionError(f"Ошибка соединения с HH.ru: {e}")
+    except Exception as e:
+        logger.error(f"❌ HH.ru UNEXPECTED | {e}")
+        raise
 
 def parse_superjob_vacancies(text, town_id=4, payment_from=None, payment_to=None, count=50):
     """SuperJob API (без авторизации)"""
+    logger.info(f"→ SuperJob API request: text='{text}', town_id={town_id}")
+    
     params = {
         "keyword": text,
         "town": town_id,  # Москва=4
@@ -139,7 +180,7 @@ def parse_superjob_vacancies(text, town_id=4, payment_from=None, payment_to=None
     params["no_agreement"] = 1
     
     try:
-        resp = requests.get(SJ_API, params=params, headers=HEADERS)
+        resp = requests.get(SJ_API, params=params, headers=HEADERS, timeout=30)
         data = resp.json()
         
         vacancies = []
@@ -166,8 +207,15 @@ def parse_superjob_vacancies(text, town_id=4, payment_from=None, payment_to=None
                 "url": f"https://www.superjob.ru/vakansii/{vac['id']}.html"
             })
         return pd.DataFrame(vacancies)
-    except:
-        return pd.DataFrame()
+    except Timeout:
+        logger.error(f"❌ SuperJob TIMEOUT | text='{text}'")
+        raise TimeoutError("Превышен таймаут при запросе к SuperJob. Попробуйте позже.")
+    except RequestException as e:
+        logger.error(f"❌ SuperJob ERROR | {e}")
+        raise ConnectionError(f"Ошибка соединения с SuperJob: {e}")
+    except Exception as e:
+        logger.error(f"❌ SuperJob UNEXPECTED | {e}")
+        raise
 
 def cache_vacancies(df):
     """Сохранить в PostgreSQL"""
@@ -201,17 +249,22 @@ def cache_vacancies(df):
 
 def get_cached_vacancies(text, hours=24):
     """Вакансии из кэша"""
-    conn = get_db_connection()
-    query = """
-        SELECT * FROM vacancies 
-        WHERE (name ILIKE %s OR description ILIKE %s)
-        AND parsed_at > NOW() - (INTERVAL '1 hour' * %s)
-        ORDER BY salary DESC LIMIT 100
-    """
-    # Исправлено: параметры передаются кортежем
-    df = pd.read_sql_query(query, conn, params=(f'%{text}%', f'%{text}%', hours))
-    conn.close()
-    return df if not df.empty else None
+    try:
+        conn = get_db_connection()
+        conn.timeout = 10  # таймаут 10 секунд
+        query = """
+            SELECT * FROM vacancies 
+            WHERE (name ILIKE %s OR description ILIKE %s)
+            AND parsed_at > NOW() - (INTERVAL '1 hour' * %s)
+            ORDER BY salary DESC LIMIT 100
+        """
+        # Исправлено: параметры передаются кортежем
+        df = pd.read_sql_query(query, conn, params=(f'%{text}%', f'%{text}%', hours))
+        conn.close()
+        return df if not df.empty else None
+    except Exception as e:
+        logger.error(f"❌ CACHE READ ERROR | {e}")
+        return None
 
 def cluster_vacancies(df):
     """ML кластеризация по сложности"""
@@ -251,6 +304,7 @@ def cluster_vacancies(df):
 # Обработчики FSM
 
 @dp.message(SearchForm.waiting_profession)
+@log_message
 async def process_profession(message: types.Message, state: FSMContext):
     await state.update_data(profession=message.text)
     await message.answer("Введите минимальную зарплату (или /skip):")
@@ -258,6 +312,7 @@ async def process_profession(message: types.Message, state: FSMContext):
 
 
 @dp.message(SearchForm.waiting_salary_from)
+@log_message
 async def process_salary_from(message: types.Message, state: FSMContext):
     if message.text != "/skip":
         salary = message.text.replace(" ", "").replace("₽", "")
@@ -268,6 +323,7 @@ async def process_salary_from(message: types.Message, state: FSMContext):
 
 
 @dp.message(SearchForm.waiting_salary_to)
+@log_message
 async def process_salary_to(message: types.Message, state: FSMContext):
     if message.text != "/skip":
         salary = message.text.replace(" ", "").replace("₽", "")
@@ -280,6 +336,7 @@ async def process_salary_to(message: types.Message, state: FSMContext):
 # Callback обработчики
 
 @dp.callback_query(F.data == "analyze")
+@log_callback
 async def analyze_callback(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("Введите название профессии:")
     await state.set_state(SearchForm.waiting_profession)
@@ -287,19 +344,24 @@ async def analyze_callback(callback: types.CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data == "ai_mode")
+@log_callback
 async def ai_mode_callback(callback: types.CallbackQuery):
     await callback.message.answer("🧠 AI анализ временно недоступен. Требуется GROK_API_KEY в .env")
     await callback.answer()
 
 
 @dp.callback_query(F.data == "clusters")
+@log_callback
 async def clusters_callback(callback: types.CallbackQuery):
     await callback.message.answer("📊 Для просмотра кластеров выполните поиск: /search Python")
     await callback.answer()
 
 
 @dp.message(Command("start"))
+@log_message
 async def start_handler(message: types.Message):
+    logger.info(f"🟢 START command | {message.from_user.full_name}")
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Анализ HH+SuperJob", callback_data="analyze")],
         [InlineKeyboardButton(text="🧠 AI Анализ", callback_data="ai_mode")],
@@ -316,6 +378,8 @@ async def start_handler(message: types.Message):
         reply_markup=keyboard, parse_mode="Markdown"
     )
 
+@dp.message(SearchForm.waiting_region)
+@log_message
 async def process_region(message: types.Message, state: FSMContext):
     data = await state.get_data()
     region = message.text.title()
@@ -329,21 +393,27 @@ async def process_region(message: types.Message, state: FSMContext):
     salary_from = data.get("salary_from")
     salary_to = data.get("salary_to")
     
+    logger.info(f"🔍 SEARCH | profession: '{profession}' | region: {region} | salary: {salary_from}-{salary_to}")
+    
     try:
         # Проверяем кэш
         cached = get_cached_vacancies(profession)
         
         if cached is not None and not cached.empty:
             df = cached
+            logger.info(f"💾 CACHE HIT | '{profession}' | {len(df)} vacancies")
         else:
             # Парсим с HH и SuperJob
+            logger.info(f"🌐 PARSING HH.ru | profession: '{profession}'")
             hh_df = parse_hh_vacancies(profession, area=area.get("hh"), salary_from=salary_from, salary_to=salary_to)
+            logger.info(f"🌐 PARSING SuperJob | profession: '{profession}'")
             sj_df = parse_superjob_vacancies(profession, town_id=area.get("sj", 4), payment_from=salary_from, payment_to=salary_to)
             
             df = pd.concat([hh_df, sj_df], ignore_index=True)
             
             if not df.empty:
                 cache_vacancies(df)
+                logger.info(f"💾 CACHE SAVED | {len(df)} vacancies")
         
         if df.empty:
             await message.answer("Вакансии не найдены")
@@ -369,16 +439,33 @@ async def process_region(message: types.Message, state: FSMContext):
                     f"📍 {vac.get('source', '?')}"
                 )
                 
+    except TimeoutError as e:
+        logger.error(f"❌ TIMEOUT | {e}")
+        await message.answer("⏱️ Превышен таймаут ожидания от сервера. Попробуйте ещё раз или повторите запрос позже.")
+    except ConnectionError as e:
+        logger.error(f"❌ CONNECTION ERROR | {e}")
+        await message.answer("🔌 Не удалось подключиться к серверу вакансий. Проверьте интернет-соединение и попробуйте позже.")
     except Exception as e:
-        logger.error(f"Search error: {e}")
-        await message.answer(f"Ошибка поиска: {e}")
+        logger.error(f"❌ SEARCH ERROR | {e}")
+        await message.answer(f"⚠️ Произошла ошибка при поиске: {str(e)[:100]}")
     
     # Завершаем состояние
     await state.clear()
     await state.set_state(None)
 
 async def main():
-    init_db()
+    logger.info("🚀 Starting Vacancy Analyzer PRO...")
+    logger.info(f"📡 Bot token: {BOT_TOKEN[:15]}...")
+    logger.info(f"🗄 DB: {DB_CONFIG['database']}@{DB_CONFIG['host']}")
+    
+    # Инициализация БД
+    try:
+        init_db()
+        logger.info("✅ Database connected and initialized")
+    except Exception as e:
+        logger.error(f"❌ Database init failed: {e}")
+    
+    logger.info("🤖 Bot is polling for updates...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
