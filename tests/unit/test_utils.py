@@ -732,3 +732,21 @@ class TestClarificationHelpers:
         assert apply_clarification("Developer", "Python backend") == "Python backend"
         assert apply_clarification("Developer", "Python") == "Developer Python"
         assert apply_clarification("Data", "/skip") == "Data"
+
+
+class TestAnalyticsHelpers:
+    """Test suite for analytics helpers."""
+
+    @pytest.mark.unit
+    def test_compute_market_stats(self):
+        from vacancy_bot import compute_market_stats
+        df = pd.DataFrame([
+            {"salary": 100000, "skills": ["Python", "Django"], "company": "A", "description": "remote", "experience": "junior"},
+            {"salary": 200000, "skills": ["Python"], "company": "B", "description": "office", "experience": "senior"},
+            {"salary": 0, "skills": ["SQL"], "company": "A", "description": "remote", "experience": "middle"},
+        ])
+        stats = compute_market_stats(df, top_n_skills=2, top_n_companies=2)
+        assert stats["total"] == 3
+        assert stats["avg_salary"] == 150000
+        assert stats["median_salary"] == 150000
+        assert stats["salary_count"] == 2

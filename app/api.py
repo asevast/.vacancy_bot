@@ -13,6 +13,10 @@ from app.config import (
     HABR_API_TOKEN,
     AGGREGATOR_API_URL,
     AGGREGATOR_API_TOKEN,
+    JOOBLE_API_KEY,
+    ADZUNA_APP_ID,
+    ADZUNA_APP_KEY,
+    ADZUNA_COUNTRY,
     logger
 )
 
@@ -342,6 +346,125 @@ def parse_aggregator_vacancies(text, count=50, region_label=None):
         raise ConnectionError(f"Connection error with aggregator: {e}")
     except Exception as e:
         logger.error(f"Aggregator UNEXPECTED | {e}")
+        raise
+
+
+def parse_jooble_vacancies(text, count=50, region_label=None):
+    """Jooble API (requires JOOBLE_API_KEY)."""
+    if not JOOBLE_API_KEY:
+        return pd.DataFrame()
+
+    url = f"https://jooble.org/api/{JOOBLE_API_KEY}"
+    payload = {
+        "keywords": text,
+        "location": region_label if region_label and region_label != "Все" else "",
+        "page": 1,
+        "resultOnPage": min(count, 100)
+    }
+    try:
+        resp = requests.post(url, json=payload, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("jobs") or data.get("items") or []
+        vacancies = []
+        for vac in items:
+            salary = vac.get("salary") or ""
+            salary_avg = 0
+            if isinstance(salary, (int, float)):
+                salary_avg = int(salary)
+            vacancies.append({
+                "source": "jooble",
+                "external_id": str(vac.get("id") or vac.get("jobkey") or ""),
+                "name": vac.get("title") or vac.get("name") or "",
+                "company": vac.get("company") or "N/A",
+                "salary": salary_avg,
+                "description": vac.get("snippet") or vac.get("description") or "",
+                "skills": vac.get("skills") or [],
+                "experience": vac.get("experience") or "unknown",
+                "url": vac.get("link") or vac.get("url") or "",
+                "region": region_label
+            })
+        return pd.DataFrame(vacancies)
+    except HTTPError as e:
+        logger.error(f"Jooble HTTP ERROR | {e}")
+        raise
+    except Timeout:
+        logger.error(f"Jooble TIMEOUT | text='{text}'")
+        raise TimeoutError("Timeout when requesting Jooble. Try again later.")
+    except SSLError as e:
+        logger.error(f"Jooble SSL ERROR | {e}")
+        raise ConnectionError(f"SSL error with Jooble: {e}")
+    except RequestException as e:
+        logger.error(f"Jooble ERROR | {e}")
+        raise ConnectionError(f"Connection error with Jooble: {e}")
+    except Exception as e:
+        logger.error(f"Jooble UNEXPECTED | {e}")
+        raise
+
+
+def parse_adzuna_vacancies(text, count=50, region_label=None):
+    """Adzuna API (requires ADZUNA_APP_ID/ADZUNA_APP_KEY)."""
+    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+        return pd.DataFrame()
+
+    page = 1
+    url = f"https://api.adzuna.com/v1/api/jobs/{ADZUNA_COUNTRY}/search/{page}"
+    params = {
+        "app_id": ADZUNA_APP_ID,
+        "app_key": ADZUNA_APP_KEY,
+        "what": text,
+        "where": region_label if region_label and region_label != "Все" else "",
+        "results_per_page": min(count, 50)
+    }
+    try:
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("results") or data.get("items") or []
+        vacancies = []
+        for vac in items:
+            salary_min = vac.get("salary_min") or 0
+            salary_max = vac.get("salary_max") or 0
+            salary_avg = 0
+            if salary_min and salary_max:
+                salary_avg = int((salary_min + salary_max) // 2)
+            elif salary_min:
+                salary_avg = int(salary_min)
+            elif salary_max:
+                salary_avg = int(salary_max)
+
+            company = ""
+            if isinstance(vac.get("company"), dict):
+                company = vac.get("company", {}).get("display_name", "")
+            company = company or vac.get("company", "N/A")
+
+            vacancies.append({
+                "source": "adzuna",
+                "external_id": str(vac.get("id") or ""),
+                "name": vac.get("title") or "",
+                "company": company,
+                "salary": salary_avg,
+                "description": vac.get("description") or "",
+                "skills": vac.get("skills") or [],
+                "experience": vac.get("experience") or "unknown",
+                "url": vac.get("redirect_url") or vac.get("url") or "",
+                "region": region_label
+            })
+        return pd.DataFrame(vacancies)
+    except HTTPError as e:
+        logger.error(f"Adzuna HTTP ERROR | {e}")
+        raise
+    except Timeout:
+        logger.error(f"Adzuna TIMEOUT | text='{text}'")
+        raise TimeoutError("Timeout when requesting Adzuna. Try again later.")
+    except SSLError as e:
+        logger.error(f"Adzuna SSL ERROR | {e}")
+        raise ConnectionError(f"SSL error with Adzuna: {e}")
+    except RequestException as e:
+        logger.error(f"Adzuna ERROR | {e}")
+        raise ConnectionError(f"Connection error with Adzuna: {e}")
+    except Exception as e:
+        logger.error(f"Adzuna UNEXPECTED | {e}")
         raise
     except Timeout:
         logger.error(f"SuperJob TIMEOUT | text='{text}'")

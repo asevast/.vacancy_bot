@@ -19,6 +19,7 @@ Telegram-бот для поиска и анализа вакансий с пла
 ### Команды
 - `/start` — главное меню
 - `/search <профессия> [options]` — быстрый поиск с фильтрами и сортировкой
+- `/stats <профессия> [options]` — аналитика рынка по запросу
 - `/cache` — показать кэшированные вакансии
 - `/subscribe` — создать подписку (FSM)
 - `/subscriptions` — список подписок
@@ -72,6 +73,14 @@ SJ_API_KEY=your_superjob_api_key
 # Habr Career API (опционально)
 HABR_API_URL=https://career.habr.com/api/v1/vacancies
 HABR_API_TOKEN=your_habr_token
+
+# Jooble API (опционально)
+JOOBLE_API_KEY=your_jooble_api_key
+
+# Adzuna API (опционально)
+ADZUNA_APP_ID=your_adzuna_app_id
+ADZUNA_APP_KEY=your_adzuna_app_key
+ADZUNA_COUNTRY=ru
 
 # Aggregator API (опционально)
 AGGREGATOR_API_URL=https://example.com/api/v1/vacancies
@@ -136,6 +145,8 @@ python vacancy_bot.py
 /search Java region=Москва salary_from=150000
 /search Frontend order=salary_asc limit=20
 /search DevOps source=hh experience=between1And3 only_with_salary=1
+/stats Python region=Москва
+/stats Data Scientist source=hh period=30
 ```
 Если запрос слишком общий, бот попросит уточнить специализацию или стек. Для пошагового уточнения используйте `/start`.
 
@@ -232,6 +243,10 @@ docker-compose restart bot
 | KILO_AUTO_MODEL | Модель Kilo Auto (опционально) | kilo-auto |
 | HABR_API_URL | URL API Habr Career | https://career.habr.com/api/v1/vacancies |
 | HABR_API_TOKEN | Токен Habr Career (опционально) | your_habr_token |
+| JOOBLE_API_KEY | API ключ Jooble (опционально) | your_jooble_api_key |
+| ADZUNA_APP_ID | App ID Adzuna (опционально) | your_adzuna_app_id |
+| ADZUNA_APP_KEY | App Key Adzuna (опционально) | your_adzuna_app_key |
+| ADZUNA_COUNTRY | Страна Adzuna | ru |
 | AGGREGATOR_API_URL | URL API агрегатора (опционально) | https://example.com/api/v1/vacancies |
 | AGGREGATOR_API_TOKEN | Токен агрегатора (опционально) | your_aggregator_token |
 | DB_NAME | Имя базы данных | vacancy_bot |
@@ -246,7 +261,7 @@ docker-compose restart bot
 MIT
 - `region=Москва|СПб|Все` — регион
 - `salary_from=100000` / `salary_to=200000` — зарплатная вилка
-- `source=hh|sj|habr|agg` — источник
+- `source=hh|sj|habr|jooble|adzuna|agg` — источник
 - `order=salary_desc|salary_asc` — сортировка
 - `limit=20` — ограничение вывода
 - `experience=between1And3` — опыт (HH)

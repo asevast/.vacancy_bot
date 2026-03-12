@@ -15,6 +15,9 @@ from app.config import (
     KILO_AUTO_API_KEY,
     SUBSCRIPTION_POLL_SECONDS,
     LIST_PAGE_SIZE,
+    JOOBLE_API_KEY,
+    ADZUNA_APP_ID,
+    ADZUNA_APP_KEY,
     logger
 )
 from app.context import bot, dp
@@ -36,7 +39,14 @@ from app.db import (
     deactivate_subscription,
     update_subscription_last_sent
 )
-from app.api import parse_hh_vacancies, parse_superjob_vacancies, parse_habr_vacancies, parse_aggregator_vacancies
+from app.api import (
+    parse_hh_vacancies,
+    parse_superjob_vacancies,
+    parse_habr_vacancies,
+    parse_aggregator_vacancies,
+    parse_jooble_vacancies,
+    parse_adzuna_vacancies
+)
 from app.ml import cluster_vacancies
 from app.ai import ask_kilo_auto
 from app.lists import (
@@ -54,6 +64,7 @@ from app.profile import (
     parse_technologies,
     profile_summary
 )
+from app.analytics import compute_market_stats, format_market_stats
 
 
 # Регионы (HH ID : SJ ID)
@@ -761,6 +772,22 @@ async def search_command(message: types.Message):
                 )
             else:
                 habr_df = pd.DataFrame()
+            if source in (None, "jooble"):
+                jooble_df = parse_jooble_vacancies(
+                    profession,
+                    count=limit,
+                    region_label=region
+                )
+            else:
+                jooble_df = pd.DataFrame()
+            if source in (None, "adzuna"):
+                adzuna_df = parse_adzuna_vacancies(
+                    profession,
+                    count=limit,
+                    region_label=region
+                )
+            else:
+                adzuna_df = pd.DataFrame()
             if source in (None, "agg"):
                 agg_df = parse_aggregator_vacancies(
                     profession,
@@ -770,7 +797,7 @@ async def search_command(message: types.Message):
             else:
                 agg_df = pd.DataFrame()
             
-            df = pd.concat([hh_df, sj_df, habr_df, agg_df], ignore_index=True)
+            df = pd.concat([hh_df, sj_df, habr_df, jooble_df, adzuna_df, agg_df], ignore_index=True)
 
             df = _apply_profile_filters(df, level=level, work_format=work_format, technologies=technologies)
             
@@ -836,6 +863,7 @@ async def help_command(message: types.Message):
         "Доступные команды:\n\n"
         "/start - Главное меню\n"
         "/search <профессия> [опции] - Быстрый поиск (например, /search Python region=Москва salary_from=100000 order=salary_desc)\n"
+        "/stats <профессия> [опции] - Аналитика рынка по запросу\n"
         "/cache - Показать кэш\n"
         "/subscribe - Создать подписку (FSM)\n"
         "/subscriptions - Список подписок\n"
@@ -850,20 +878,133 @@ async def help_command(message: types.Message):
         "/search Frontend order=salary_asc limit=20\n"
         "/search DevOps source=hh experience=between1And3 only_with_salary=1\n"
         "/search Python source=habr\n"
-        "/search Golang source=agg"
+        "/search Go source=jooble\n"
+        "/search Rust source=adzuna\n"
+        "/search Golang source=agg\n"
+        "/stats Python region=Москва"
     )
+
+
+@dp.message(Command("stats"))
+async def stats_command(message: types.Message):
+    text = message.text.replace("/stats", "").strip()
+    profession, opts = parse_search_options(text)
+
+    if not profession:
+        await message.answer("Использование: /stats <профессия> [опции]")
+        return
+
+    await message.answer(f"Собираю аналитику: {profession}...")
+
+    try:
+        user_id = getattr(getattr(message, "from_user", None), "id", None)
+        profile = _safe_get_profile(user_id)
+        defaults = {
+            "region": profile.get("region") if profile else None,
+            "salary_from": profile.get("salary_from") if profile else None,
+            "salary_to": profile.get("salary_to") if profile else None,
+            "level": profile.get("level") if profile else None,
+            "work_format": profile.get("work_format") if profile else None,
+            "technologies": profile.get("technologies") if profile else None
+        }
+
+        region = normalize_region_input(opts.get("region")) if opts.get("region") else (defaults.get("region") or "Все")
+        area = AREAS.get(region, AREAS["Нижний Новгород"])
+        salary_from = int(opts["salary_from"]) if opts.get("salary_from", "").isdigit() else defaults.get("salary_from")
+        salary_to = int(opts["salary_to"]) if opts.get("salary_to", "").isdigit() else defaults.get("salary_to")
+        source = opts.get("source")
+        limit = int(opts["limit"]) if opts.get("limit", "").isdigit() else 50
+
+        experience = opts.get("experience")
+        employment = opts.get("employment")
+        schedule = opts.get("schedule")
+        professional_role = opts.get("professional_role")
+        search_field = opts.get("search_field")
+        period = opts.get("period")
+        currency = opts.get("currency")
+        label = opts.get("label")
+        order_by = opts.get("order_by")
+        page = int(opts["page"]) if opts.get("page", "").isdigit() else None
+        only_with_salary = opts.get("only_with_salary") in {"1", "true", "yes"}
+        level = opts.get("level") or defaults.get("level")
+        work_format = opts.get("format") or defaults.get("work_format")
+        technologies = defaults.get("technologies") or []
+
+        cached = get_cached_vacancies(profession, region=region, salary_from=salary_from, salary_to=salary_to)
+        if cached is not None and not cached.empty:
+            df = cached
+        else:
+            hh_df = pd.DataFrame()
+            sj_df = pd.DataFrame()
+            if source in (None, "hh"):
+                hh_df = parse_hh_vacancies(
+                    profession,
+                    area=area.get("hh"),
+                    salary_from=salary_from,
+                    salary_to=salary_to,
+                    region_label=region,
+                    experience=experience,
+                    employment=employment,
+                    only_with_salary=only_with_salary,
+                    schedule=schedule,
+                    professional_role=professional_role,
+                    search_field=search_field,
+                    period=period,
+                    currency=currency,
+                    label=label,
+                    order_by=order_by,
+                    page=page
+                )
+            if source in (None, "sj"):
+                sj_df = parse_superjob_vacancies(
+                    profession,
+                    town_id=area.get("sj", 4),
+                    payment_from=salary_from,
+                    payment_to=salary_to,
+                    region_label=region
+                )
+            habr_df = parse_habr_vacancies(profession, count=limit, region_label=region) if source in (None, "habr") else pd.DataFrame()
+            jooble_df = parse_jooble_vacancies(profession, count=limit, region_label=region) if source in (None, "jooble") else pd.DataFrame()
+            adzuna_df = parse_adzuna_vacancies(profession, count=limit, region_label=region) if source in (None, "adzuna") else pd.DataFrame()
+            agg_df = parse_aggregator_vacancies(profession, count=limit, region_label=region) if source in (None, "agg") else pd.DataFrame()
+
+            df = pd.concat([hh_df, sj_df, habr_df, jooble_df, adzuna_df, agg_df], ignore_index=True)
+            if not df.empty:
+                safe_cache_vacancies(df)
+
+        df = _apply_profile_filters(df, level=level, work_format=work_format, technologies=technologies)
+        if df.empty:
+            await message.answer("Нет данных для аналитики.")
+            return
+
+        stats = compute_market_stats(df)
+        await message.answer(format_market_stats(profession, stats))
+    except TimeoutError:
+        await message.answer("Таймаут. Попробуйте позже.")
+    except ConnectionError:
+        await message.answer("Ошибка соединения. Проверьте интернет и повторите.")
+    except Exception as e:
+        logger.error(f"STATS ERROR | {e}")
+        await message.answer(f"Ошибка аналитики: {str(e)[:100]}")
 
 
 @dp.message(Command("sources"))
 async def sources_command(message: types.Message):
+    jooble_status = "настроен" if JOOBLE_API_KEY else "не настроен"
+    adzuna_status = "настроен" if (ADZUNA_APP_ID and ADZUNA_APP_KEY) else "не настроен"
     await message.answer(
         "Источники вакансий:\n"
         "• HH.ru (по умолчанию)\n"
         "• SuperJob (нужен SJ_API_KEY)\n"
         "• Habr Career (нужен HABR_API_TOKEN, HABR_API_URL опционально)\n"
+        f"• Jooble (нужен JOOBLE_API_KEY) — {jooble_status}\n"
+        f"• Adzuna (нужны ADZUNA_APP_ID и ADZUNA_APP_KEY) — {adzuna_status}\n"
         "• Агрегатор (нужны AGGREGATOR_API_URL и AGGREGATOR_API_TOKEN)\n\n"
         "Настройка токенов: откройте .env и заполните ключи, затем перезапустите бота.\n"
-        "Подсказка: используйте /search ... source=hh|sj|habr|agg"
+        "Подсказки по регистрации ключей:\n"
+        "• Jooble: зарегистрируйтесь на сайте Jooble для получения API key.\n"
+        "• Adzuna: зарегистрируйтесь в Adzuna Developer Portal и получите App ID и App Key.\n"
+        "Подсказка: используйте /search ... source=hh|sj|habr|jooble|adzuna|agg"
     )
 
 
@@ -984,9 +1125,11 @@ async def process_search_confirmation(message: types.Message, state: FSMContext)
             logger.info(f"PARSING SuperJob | profession: '{profession}'")
             sj_df = parse_superjob_vacancies(profession, town_id=area.get("sj", 4), payment_from=salary_from, payment_to=salary_to, region_label=region)
             habr_df = parse_habr_vacancies(profession, count=50, region_label=region)
+            jooble_df = parse_jooble_vacancies(profession, count=50, region_label=region)
+            adzuna_df = parse_adzuna_vacancies(profession, count=50, region_label=region)
             agg_df = parse_aggregator_vacancies(profession, count=50, region_label=region)
             
-            df = pd.concat([hh_df, sj_df, habr_df, agg_df], ignore_index=True)
+            df = pd.concat([hh_df, sj_df, habr_df, jooble_df, adzuna_df, agg_df], ignore_index=True)
             
             if not df.empty:
                 safe_cache_vacancies(df)

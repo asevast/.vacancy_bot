@@ -21,6 +21,10 @@ from app.config import (
     HABR_API_TOKEN,
     AGGREGATOR_API_URL,
     AGGREGATOR_API_TOKEN,
+    JOOBLE_API_KEY,
+    ADZUNA_APP_ID,
+    ADZUNA_APP_KEY,
+    ADZUNA_COUNTRY,
     logger
 )
 from app.context import bot, dp
@@ -42,7 +46,14 @@ from app.db import (
     deactivate_subscription,
     update_subscription_last_sent
 )
-from app.api import parse_hh_vacancies, parse_superjob_vacancies, parse_habr_vacancies, parse_aggregator_vacancies
+from app.api import (
+    parse_hh_vacancies,
+    parse_superjob_vacancies,
+    parse_habr_vacancies,
+    parse_aggregator_vacancies,
+    parse_jooble_vacancies,
+    parse_adzuna_vacancies
+)
 from app.ml import cluster_vacancies
 from app.ai import ask_kilo_auto
 from app.lists import (
@@ -55,6 +66,7 @@ from app.lists import (
     list_page_handler,
     start_web_server
 )
+from app.analytics import compute_market_stats, format_market_stats
 from app.handlers import (
     AREAS,
     SearchForm,
@@ -85,6 +97,7 @@ from app.handlers import (
     ai_command,
     search_command,
     help_command,
+    stats_command,
     cache_command,
     start_handler,
     process_region,
