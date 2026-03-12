@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: test_vacancy_bot
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+    
+    - name: Run unit tests
+      run: |
+        pytest tests/unit/ -v --cov=vacancy_bot --cov-report=xml --cov-report=term --cov-branch --tb=short -m unit
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        KILO_AUTO_API_KEY: ${{ secrets.KILO_AUTO_API_KEY }}
+        KILO_AUTO_API_URL: ${{ secrets.KILO_AUTO_API_URL }}
+        KILO_AUTO_MODEL: ${{ secrets.KILO_AUTO_MODEL }}
+        DB_HOST: localhost
+        DB_PORT: 5432
+        DB_NAME: test_vacancy_bot
+        DB_USER: test_user
+        DB_PASS: test_password
+    
+    - name: Run integration tests
+      run: |
+        pytest tests/integration/ -v --cov=vacancy_bot --cov-report=xml --cov-report=term --tb=short -m integration
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        KILO_AUTO_API_KEY: ${{ secrets.KILO_AUTO_API_KEY }}
+        DB_HOST: localhost
+        DB_PORT: 5432
+        DB_NAME: test_vacancy_bot
+        DB_USER: test_user
+        DB_PASS: test_password
+    
+    - name: Run functional tests
+      run: |
+        pytest tests/functional/ -v --tb=short -m functional
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: vacancy-bot
+        fail_ci_if_error: false
+    
+    - name: Generate HTML coverage report
+      run: |
+        pytest --cov=vacancy_bot --cov-report=html
+        echo "Coverage report generated at htmlcov/index.html"
+    
+    - name: Check code style
+      run: |
+        pip install flake8
+        flake8 vacancy_bot.py --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 vacancy_bot.py --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install flake8
+        pip install -r requirements.txt
+    
+    - name: Run flake8
+      run: |
+        flake8 vacancy_bot.py --count --max-line-length=120 --statistics
+    
+    - name: Check imports
+      run: |
+        python -c "import vacancy_bot; print('Import successful')"
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Check for vulnerabilities
+      run: |
+        pip install safety
+        pip install -r requirements.txt
+        safety check || true
+    
+    - name: Run bandit security check
+      run: |
+        pip install bandit
+        bandit -r vacancy_bot.py || true
+
+  summary:
+    needs: [test, lint, security]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Summary
+      run: |
+        echo "## Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "All tests completed. Check the results above." >> $GITHUB_STEP_SUMMARY

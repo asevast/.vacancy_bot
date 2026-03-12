@@ -1,0 +1,21 @@
+# Test dependencies for vacancy_bot
+# Install with: pip install -r requirements-test.txt
+
+# Core testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+pytest-cov>=4.1.0
+pytest-timeout>=2.1.0
+pytest-xdist>=3.3.0  # For parallel test execution
+
+# Mocking
+aioresponses>=0.7.6
+httpx>=0.24.0
+
+# Coverage
+coverage>=7.3.0
+
+# Additional tools
+freezegun>=1.2.0
+faker>=19.0.0

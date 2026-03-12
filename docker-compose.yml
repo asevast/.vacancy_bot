@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: vacancy_bot
+    restart: unless-stopped
+    environment:
+       - BOT_TOKEN=${BOT_TOKEN}
+       - KILO_AUTO_API_KEY=${KILO_AUTO_API_KEY}
+       - KILO_AUTO_API_URL=${KILO_AUTO_API_URL}
+       - KILO_AUTO_MODEL=${KILO_AUTO_MODEL}
+       - DB_HOST=db
+       - DB_PORT=5432
+       - DB_NAME=${DB_NAME}
+       - DB_USER=${DB_USER}
+       - DB_PASS=${DB_PASS}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - bot_network
+
+  db:
+    image: postgres:16-alpine
+    container_name: vacancy_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASS}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot_network
+
+volumes:
+  postgres_data:
+
+networks:
+  bot_network:
+    driver: bridge

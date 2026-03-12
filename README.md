@@ -51,8 +51,10 @@ pip install -r requirements.txt
 # Telegram Bot
 BOT_TOKEN=your_telegram_bot_token
 
-# GROK AI (опционально)
-GROK_API_KEY=your_grok_api_key
+# Kilo Auto AI (опционально)
+KILO_AUTO_API_KEY=your_kilo_auto_api_key
+KILO_AUTO_API_URL=https://api.kilo-auto.ai/v1/chat/completions
+KILO_AUTO_MODEL=kilo-auto
 
 # PostgreSQL
 DB_HOST=localhost
@@ -132,6 +134,58 @@ $env:PATH += ";C:\Program Files\PostgreSQL\18\bin"
 
 ### Не подключается к БД
 Проверьте настройки в `.env` и убедитесь, что PostgreSQL запущен.
+
+## 🐳 Docker
+
+### Быстрый старт
+
+1. Скопируйте `.env.example` в `.env` и заполните значения:
+```bash
+cp .env.example .env
+```
+
+2. Запустите контейнеры:
+```bash
+docker-compose up -d
+```
+
+3. Проверьте статус:
+```bash
+docker-compose logs -f bot
+```
+
+### Команды Docker
+
+```bash
+# Запуск
+docker-compose up -d
+
+# Остановка
+docker-compose down
+
+# Пересборка
+docker-compose up -d --build
+
+# Просмотр логов
+docker-compose logs -f
+docker-compose logs -f bot   # только бот
+docker-compose logs -f db    # только БД
+
+# Перезапуск
+docker-compose restart bot
+```
+
+### Переменные окружения
+
+| Переменная | Описание | Пример |
+|------------|----------|--------|
+| BOT_TOKEN | Токен Telegram бота | 123456:ABC-DEF... |
+| KILO_AUTO_API_KEY | API ключ Kilo Auto (опционально) | your_key_here |
+| KILO_AUTO_API_URL | URL API Kilo Auto (опционально) | https://api.kilo-auto.ai/v1/chat/completions |
+| KILO_AUTO_MODEL | Модель Kilo Auto (опционально) | kilo-auto |
+| DB_NAME | Имя базы данных | vacancy_bot |
+| DB_USER | Пользователь PostgreSQL | postgres |
+| DB_PASS | Пароль PostgreSQL | my_password |
 
 ## 📄 Лицензия
 
