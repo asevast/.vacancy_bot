@@ -32,6 +32,7 @@ os.environ["BOT_TOKEN"] = _TEST_BOT_TOKEN
 os.environ["KILO_AUTO_API_KEY"] = "test_kilo_api_key"
 os.environ["KILO_AUTO_API_URL"] = "https://test-api.kilo-auto.ai/v1/chat/completions"
 os.environ["KILO_AUTO_MODEL"] = "test-model"
+os.environ["SJ_API_KEY"] = "test_superjob_api_key"
 os.environ["DB_HOST"] = "localhost"
 os.environ["DB_PORT"] = "5432"
 os.environ["DB_NAME"] = "test_vacancy_bot"
@@ -63,6 +64,7 @@ def mock_env_vars():
         "KILO_AUTO_API_KEY": "test_kilo_api_key",
         "KILO_AUTO_API_URL": "https://test-api.kilo-auto.ai/v1/chat/completions",
         "KILO_AUTO_MODEL": "test-model",
+        "SJ_API_KEY": "test_superjob_api_key",
         "DB_HOST": "localhost",
         "DB_PORT": "5432",
         "DB_NAME": "test_vacancy_bot",

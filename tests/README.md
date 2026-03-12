@@ -15,7 +15,7 @@ tests/
 ├── unit/
 │   ├── test_parsing.py  # Тесты парсинга HH.ru и SuperJob
 │   ├── test_ml.py       # Тесты ML кластеризации
-│   └── test_utils.py    # Тесты утилит и БД функций
+│   └── test_utils.py    # Тесты утилит и БД функций (включая подписки)
 ├── integration/
 │   ├── test_api.py      # Тесты API интеграции
 │   ├── test_ai.py       # Тесты AI интеграции

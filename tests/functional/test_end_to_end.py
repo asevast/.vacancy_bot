@@ -116,7 +116,8 @@ class TestFSMStates:
             'waiting_profession',
             'waiting_salary_from',
             'waiting_salary_to',
-            'waiting_region'
+            'waiting_region',
+            'waiting_confirmation'
         ]
         
         for state in required_states:
@@ -323,7 +324,6 @@ class TestSearchWorkflow:
         
         # Import functions
         from vacancy_bot import parse_hh_vacancies, parse_superjob_vacancies
-        import pandas as pd
         
         # Act - Simulate search
         hh_df = parse_hh_vacancies("Python")
@@ -455,7 +455,7 @@ class TestErrorRecoveryWorkflow:
         # Arrange
         mock_cache.side_effect = Exception("Cache failed")
         
-        from vacancy_bot import cache_vacancies
+        from vacancy_bot import safe_cache_vacancies
         import pandas as pd
         
         df = pd.DataFrame([{
@@ -471,7 +471,7 @@ class TestErrorRecoveryWorkflow:
         }])
         
         # Act - should not raise
-        cache_vacancies(df)
+        safe_cache_vacancies(df)
         
         # Assert - was called
         assert mock_cache.called

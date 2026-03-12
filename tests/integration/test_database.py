@@ -159,6 +159,24 @@ class TestDatabaseSchemaIntegration:
         # Assert
         execute_calls = ' '.join([str(call) for call in mock_cursor.execute.call_args_list])
         assert 'UNIQUE' in execute_calls or 'unique' in execute_calls.lower()
+
+    @pytest.mark.integration
+    @pytest.mark.db
+    @patch('psycopg2.connect')
+    def test_subscriptions_table_created(self, mock_connect):
+        """
+        Test that subscriptions table is created.
+        """
+        mock_conn = Mock()
+        mock_cursor = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_connect.return_value = mock_conn
+
+        from vacancy_bot import init_db
+        init_db()
+
+        execute_calls = ' '.join([str(call) for call in mock_cursor.execute.call_args_list])
+        assert 'subscriptions' in execute_calls.lower()
     
     @pytest.mark.integration
     @pytest.mark.db

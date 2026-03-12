@@ -284,7 +284,6 @@ class TestCombinedAPIIntegration:
         
         # Import the function that combines results
         from vacancy_bot import parse_hh_vacancies, parse_superjob_vacancies
-        import pandas as pd
         
         # Act
         hh_df = parse_hh_vacancies("Python")
@@ -320,7 +319,6 @@ class TestCombinedAPIIntegration:
         }])
         
         from vacancy_bot import parse_hh_vacancies, parse_superjob_vacancies
-        import pandas as pd
         
         # Act - HH fails, but SJ works
         try:

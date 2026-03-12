@@ -392,7 +392,77 @@ class TestGetCachedVacancies:
             get_cached_vacancies("Python")
             
             # Assert
-            mock_conn.close.assert_called_once()
+        mock_conn.close.assert_called_once()
+
+
+# ==============================================================================
+# Subscriptions Tests
+# ==============================================================================
+
+class TestSubscriptions:
+    """Test suite for subscription utilities."""
+
+    @pytest.mark.unit
+    @patch('psycopg2.connect')
+    def test_add_subscription_returns_id(self, mock_connect):
+        """
+        Test that add_subscription returns new id.
+        """
+        mock_conn = Mock()
+        mock_cursor = Mock()
+        mock_cursor.fetchone.return_value = [42]
+        mock_conn.cursor.return_value = mock_cursor
+        mock_connect.return_value = mock_conn
+
+        from vacancy_bot import add_subscription
+
+        sub_id = add_subscription(1, "Python", region="Москва", salary_from=100000, salary_to=200000)
+        assert sub_id == 42
+
+    @pytest.mark.unit
+    @patch('psycopg2.connect')
+    def test_list_subscriptions_returns_dataframe(self, mock_connect):
+        """
+        Test that list_subscriptions returns DataFrame.
+        """
+        mock_conn = Mock()
+        mock_connect.return_value = mock_conn
+        with patch('pandas.read_sql_query') as mock_read:
+            mock_read.return_value = pd.DataFrame([{"id": 1}])
+            from vacancy_bot import list_subscriptions
+            result = list_subscriptions(1)
+            assert result is not None
+
+    @pytest.mark.unit
+    @patch('psycopg2.connect')
+    def test_deactivate_subscription_executes_update(self, mock_connect):
+        """
+        Test deactivate_subscription updates active flag.
+        """
+        mock_conn = Mock()
+        mock_cursor = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_connect.return_value = mock_conn
+
+        from vacancy_bot import deactivate_subscription
+        deactivate_subscription(1, 10)
+        assert mock_cursor.execute.called
+
+    @pytest.mark.unit
+    @patch('psycopg2.connect')
+    def test_get_cached_vacancies_since_uses_since(self, mock_connect):
+        """
+        Test that get_cached_vacancies_since uses parsed_at > since.
+        """
+        mock_conn = Mock()
+        mock_connect.return_value = mock_conn
+        with patch('pandas.read_sql_query') as mock_read:
+            mock_read.return_value = pd.DataFrame()
+            from vacancy_bot import get_cached_vacancies_since
+            since = datetime.utcnow()
+            get_cached_vacancies_since("Python", since)
+            query = mock_read.call_args[0][0]
+            assert 'parsed_at >' in query
 
 
 # ==============================================================================
@@ -614,3 +684,51 @@ class TestLogging:
         from vacancy_bot import log_callback
         
         assert callable(log_callback)
+
+
+class TestSearchOptions:
+    """Test suite for search options parser."""
+
+    @pytest.mark.unit
+    def test_parse_search_options_splits_profession_and_opts(self):
+        from vacancy_bot import parse_search_options
+
+        profession, opts = parse_search_options("Python Developer region=Москва salary_from=100000 order=salary_desc")
+        assert profession == "Python Developer"
+        assert opts["region"] == "Москва"
+        assert opts["salary_from"] == "100000"
+        assert opts["order"] == "salary_desc"
+
+
+class TestClarificationHelpers:
+    """Test suite for clarification helpers."""
+
+    @pytest.mark.unit
+    def test_needs_clarification_for_generic(self):
+        from vacancy_bot import needs_clarification
+
+        assert needs_clarification("Developer") is True
+        assert needs_clarification("dev") is True
+        assert needs_clarification("") is True
+
+    @pytest.mark.unit
+    def test_needs_clarification_for_specific(self):
+        from vacancy_bot import needs_clarification
+
+        assert needs_clarification("Python developer") is False
+        assert needs_clarification("Java QA engineer") is False
+
+    @pytest.mark.unit
+    def test_normalize_region_input_aliases(self):
+        from vacancy_bot import normalize_region_input
+
+        assert normalize_region_input("нижний") == "Нижний Новгород"
+        assert normalize_region_input("нн") == "Нижний Новгород"
+
+    @pytest.mark.unit
+    def test_apply_clarification_replaces_or_appends(self):
+        from vacancy_bot import apply_clarification
+
+        assert apply_clarification("Developer", "Python backend") == "Python backend"
+        assert apply_clarification("Developer", "Python") == "Developer Python"
+        assert apply_clarification("Data", "/skip") == "Data"

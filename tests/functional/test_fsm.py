@@ -6,6 +6,7 @@ Tests for bot state management and conversation flows.
 
 import pytest
 import asyncio
+import pandas as pd
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -42,6 +43,25 @@ class TestFSMStateTransitions:
         # Assert
         mock_state.update_data.assert_called_once_with(profession="Python Developer")
         mock_state.set_state.assert_called_once()
+
+    @pytest.mark.functional
+    @pytest.mark.asyncio
+    async def test_profession_requires_clarification(self):
+        """
+        Test that generic profession triggers clarification state.
+        """
+        mock_state = AsyncMock()
+        mock_state.set_state = AsyncMock()
+
+        mock_message = Mock()
+        mock_message.text = "Developer"
+        mock_message.answer = AsyncMock()
+
+        from vacancy_bot import process_profession, SearchForm
+
+        await process_profession(mock_message, mock_state)
+
+        mock_state.set_state.assert_called_with(SearchForm.waiting_clarification)
     
     @pytest.mark.functional
     @pytest.mark.asyncio
@@ -134,6 +154,51 @@ class TestFSMStateTransitions:
         
         # Assert
         mock_state.set_state.assert_called_once()
+
+    @pytest.mark.functional
+    @pytest.mark.asyncio
+    async def test_region_to_confirmation_transition(self):
+        """
+        Test transition from waiting_region to waiting_confirmation.
+        """
+        mock_state = AsyncMock()
+        mock_state.set_state = AsyncMock()
+        mock_state.get_data = AsyncMock(return_value={
+            "profession": "Python Developer",
+            "salary_from": 100000,
+            "salary_to": 200000
+        })
+
+        mock_message = Mock()
+        mock_message.text = "Москва"
+        mock_message.answer = AsyncMock()
+
+        from vacancy_bot import process_region, SearchForm
+
+        await process_region(mock_message, mock_state)
+
+        mock_state.set_state.assert_called_with(SearchForm.waiting_confirmation)
+
+
+    @pytest.mark.functional
+    @pytest.mark.asyncio
+    async def test_clarification_to_salary_from_transition(self):
+        """
+        Test transition from waiting_clarification to waiting_salary_from.
+        """
+        mock_state = AsyncMock()
+        mock_state.set_state = AsyncMock()
+        mock_state.get_data = AsyncMock(return_value={"profession": "Developer"})
+
+        mock_message = Mock()
+        mock_message.text = "Python backend"
+        mock_message.answer = AsyncMock()
+
+        from vacancy_bot import process_profession_clarification, SearchForm
+
+        await process_profession_clarification(mock_message, mock_state)
+
+        mock_state.set_state.assert_called_with(SearchForm.waiting_salary_from)
 
 
 # ==============================================================================
@@ -591,6 +656,7 @@ class TestMessageBuilding:
             "Кластер"
         ]
         
+        expected_texts = ["Анализ", "AI", "Кластеры"]
         # Verify InlineKeyboardButton exists
         assert InlineKeyboardButton is not None
     
@@ -603,7 +669,7 @@ class TestMessageBuilding:
         # (implementation uses parse_mode="Markdown")
         
         # Just verify the import works
-        from aiogram.types import ParseMode
+        from aiogram.enums import ParseMode
         assert ParseMode is not None
 
 
@@ -616,28 +682,34 @@ class TestStateCleanup:
     
     @pytest.mark.functional
     @pytest.mark.asyncio
-    async def test_region_handler_clears_state(self):
+    async def test_confirmation_handler_clears_state(self):
         """
-        Test that region handler clears state after completion.
+        Test that confirmation handler clears state after completion.
         """
         # Arrange
         mock_message = Mock()
-        mock_message.text = "Москва"
-        mock_message.text.title = Mock(return_value="Москва")
+        mock_message.text = "Да"
         mock_message.answer = AsyncMock()
         
         mock_state = AsyncMock()
         mock_state.get_data = AsyncMock(return_value={
             "profession": "Python",
-            "salary_from": 100000
+            "salary_from": 100000,
+            "salary_to": 200000,
+            "region": "Москва",
+            "area": {"hh": 1, "sj": 4}
         })
         mock_state.clear = AsyncMock()
         mock_state.set_state = AsyncMock()
         
-        from vacancy_bot import process_region
+        with patch('vacancy_bot.get_cached_vacancies', return_value=None), \
+             patch('vacancy_bot.parse_hh_vacancies', return_value=pd.DataFrame()), \
+             patch('vacancy_bot.parse_superjob_vacancies', return_value=pd.DataFrame()), \
+             patch('vacancy_bot.safe_cache_vacancies'):
+            from vacancy_bot import process_search_confirmation
         
-        # Act
-        await process_region(mock_message, mock_state)
+            # Act
+            await process_search_confirmation(mock_message, mock_state)
         
         # Assert - state should be cleared
         mock_state.clear.assert_called_once()
@@ -734,4 +806,6 @@ class TestLongResponseHandling:
             await process_ai_prompt(mock_message, mock_state)
             
             # Assert
-            mock_message.answer.assert_called_once()
+        # Two messages: "Thinking..." and the response
+        assert mock_message.answer.call_count == 2
+        assert mock_message.answer.call_args_list[1][0][0] == short_response
