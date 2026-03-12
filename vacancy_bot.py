@@ -539,6 +539,20 @@ async def search_command(message: types.Message):
         await message.answer(f"Error: {str(e)[:100]}")
 
 
+@dp.message(Command("help"))
+async def help_command(message: types.Message):
+    await message.answer(
+        "Available commands:\n\n"
+        "/start - Main menu\n"
+        "/search <profession> - Quick search (e.g., /search Python)\n"
+        "/cache - Show cached vacancies\n"
+        "/ai <question> - AI analysis (requires KILO_AUTO_API_KEY)\n"
+        "\nExamples:\n"
+        "/search Java Moscow\n"
+        "/search Frontend 150000"
+    )
+
+
 @dp.message(Command("cache"))
 async def cache_command(message: types.Message):
     """Show all cached vacancies"""
