@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import psycopg2
-from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -10,25 +9,21 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 import requests
 import pandas as pd
-import numpy as np
-from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-import json
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Настройки
+# Настройки из .env
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROK_API_KEY = os.getenv("GROK_API_KEY")
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
-    "port": os.getenv("DB_PORT", 5432),
+    "port": int(os.getenv("DB_PORT", 5432)),
     "database": os.getenv("DB_NAME", "vacancy_bot"),
-    "user": os.getenv("DB_USER"),
+    "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASS")
 }
 
@@ -97,24 +92,25 @@ def parse_hh_vacancies(text, area=113, salary_from=None, salary_to=None, count=5
         
         vacancies = []
         for vac in data["items"]:
-            salary = vac.get("salary", {})
-            salary_rub = salary.get("from", 0) if salary.get("currency") == "RUR" else 0
-            
-            skills = [s["name"] for s in vac.get("key_skills", [])]
-            desc = vac.get("snippet", {}).get("requirement", "") + " " + vac.get("snippet", {}).get("responsibility", "")
+            salary = vac.get("salary")
+            salary_rub = 0
             
             # Улучшенный парсинг зарплаты
-            salary_rub = 0
             if salary:
                 if salary.get("currency") == "RUR":
-                    from_val = salary.get("from", 0)
-                    to_val = salary.get("to", 0)
+                    from_val = salary.get("from")
+                    to_val = salary.get("to")
                     if from_val and to_val:
-                        salary_rub = (from_val + to_val) // 2  # Среднее
+                        salary_rub = (from_val + to_val) // 2
                     elif from_val:
                         salary_rub = from_val
                     elif to_val:
                         salary_rub = to_val
+            
+            skills = [s["name"] for s in vac.get("key_skills", [])]
+            desc = vac.get("snippet", {}).get("requirement", "") + " " + vac.get("snippet", {}).get("responsibility", "")
+            
+            vacancies.append({
                 "source": "hh",
                 "external_id": vac["id"],
                 "name": vac["name"],
@@ -183,6 +179,9 @@ def cache_vacancies(df):
     
     for _, vac in df.iterrows():
         try:
+            # Исправлено: преобразуем skills в массив PostgreSQL
+            skills = vac["skills"] if isinstance(vac["skills"], list) else str(vac["skills"])
+            
             cur.execute('''
                 INSERT INTO vacancies 
                 (source, external_id, name, company, salary, description, skills, experience, url)
@@ -190,7 +189,7 @@ def cache_vacancies(df):
                 ON CONFLICT (source, external_id) DO NOTHING
             ''', (
                 vac["source"], vac["external_id"], vac["name"], vac["company"],
-                vac["salary"], vac["description"], vac["skills"], 
+                vac["salary"], vac["description"], skills, 
                 vac["experience"], vac["url"]
             ))
         except Exception as e:
@@ -205,10 +204,11 @@ def get_cached_vacancies(text, hours=24):
     conn = get_db_connection()
     query = """
         SELECT * FROM vacancies 
-        WHERE name ILIKE %s OR description ILIKE %s
-        AND parsed_at > NOW() - INTERVAL '%s hours'
+        WHERE (name ILIKE %s OR description ILIKE %s)
+        AND parsed_at > NOW() - (INTERVAL '1 hour' * %s)
         ORDER BY salary DESC LIMIT 100
     """
+    # Исправлено: параметры передаются кортежем
     df = pd.read_sql_query(query, conn, params=(f'%{text}%', f'%{text}%', hours))
     conn.close()
     return df if not df.empty else None
@@ -218,22 +218,85 @@ def cluster_vacancies(df):
     if len(df) < 5:
         return df.assign(cluster="mixed")
     
-    # TF-IDF на описаниях + навыках
-    text_data = df['description'].fillna('') + ' ' + df['skills'].astype(str)
+    # Проверяем наличие зарплат
+    if 'salary' not in df.columns or df['salary'].isna().all():
+        return df.assign(cluster="unknown")
+    
+    # Фильтруем строки с зарплатой для маппинга
+    df = df.copy()
+    df['description'] = df['description'].fillna('')
+    df['skills'] = df['skills'].apply(lambda x: ' '.join(x) if isinstance(x, list) else str(x))
+    
+    text_data = df['description'] + ' ' + df['skills'].astype(str)
     vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
     X = vectorizer.fit_transform(text_data)
     
-    # KMeans кластеризация (3 группы сложности)
     kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
     clusters = kmeans.fit_predict(X)
     
-    # Маппинг: 0=Junior, 1=Middle, 2=Senior (по средней зарплате)
-    cluster_salaries = df.groupby(clusters)['salary'].mean()
-    mapping = {cluster_salaries.idxmin(): "Junior",
-               cluster_salaries.idxmax(): "Senior"}
-    mapping[set([0,1,2]) - set(mapping.keys()).pop()] = "Middle"
+    # Правильный маппинг по зарплате
+    df_temp = df.copy()
+    df_temp['cluster_num'] = clusters
+    cluster_salaries = df_temp.groupby('cluster_num')['salary'].mean().sort_values()
+    cluster_ids = list(cluster_salaries.index)
     
-    return df.assign(cluster=[mapping[c] for c in clusters])
+    mapping = {
+        cluster_ids[0]: "Junior",
+        cluster_ids[1]: "Middle", 
+        cluster_ids[2]: "Senior"
+    }
+    
+    return df.assign(cluster=[mapping.get(c, "Middle") for c in clusters])
+
+# Обработчики FSM
+
+@dp.message(SearchForm.waiting_profession)
+async def process_profession(message: types.Message, state: FSMContext):
+    await state.update_data(profession=message.text)
+    await message.answer("Введите минимальную зарплату (или /skip):")
+    await state.set_state(SearchForm.waiting_salary_from)
+
+
+@dp.message(SearchForm.waiting_salary_from)
+async def process_salary_from(message: types.Message, state: FSMContext):
+    if message.text != "/skip":
+        salary = message.text.replace(" ", "").replace("₽", "")
+        if salary.isdigit():
+            await state.update_data(salary_from=int(salary))
+    await message.answer("Введите максимальную зарплату (или /skip):")
+    await state.set_state(SearchForm.waiting_salary_to)
+
+
+@dp.message(SearchForm.waiting_salary_to)
+async def process_salary_to(message: types.Message, state: FSMContext):
+    if message.text != "/skip":
+        salary = message.text.replace(" ", "").replace("₽", "")
+        if salary.isdigit():
+            await state.update_data(salary_to=int(salary))
+    await message.answer("Введите регион (Москва, СПб, Нижний Новгород, Казань, Екатеринбург):")
+    await state.set_state(SearchForm.waiting_region)
+
+
+# Callback обработчики
+
+@dp.callback_query(F.data == "analyze")
+async def analyze_callback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите название профессии:")
+    await state.set_state(SearchForm.waiting_profession)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "ai_mode")
+async def ai_mode_callback(callback: types.CallbackQuery):
+    await callback.message.answer("🧠 AI анализ временно недоступен. Требуется GROK_API_KEY в .env")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "clusters")
+async def clusters_callback(callback: types.CallbackQuery):
+    await callback.message.answer("📊 Для просмотра кластеров выполните поиск: /search Python")
+    await callback.answer()
+
 
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
@@ -244,95 +307,75 @@ async def start_handler(message: types.Message):
     ])
     
     await message.answer(
-        "🚀 *Vacancy Analyzer PRO*
-
-"
-        "✅ HH.ru + SuperJob
-"
-        "✅ PostgreSQL кэш (24ч)
-"
-        "✅ ML кластеризация
-"
-        "✅ AI анализ
-
-"
+        "🚀 *Vacancy Analyzer PRO*\n"
+        "✅ HH.ru + SuperJob\n"
+        "✅ PostgreSQL кэш (24ч)\n"
+        "✅ ML кластеризация\n"
+        "✅ AI анализ\n"
         "_Нижний Новгород по умолчанию_",
         reply_markup=keyboard, parse_mode="Markdown"
     )
 
-@dp.message(SearchForm.waiting_region)
 async def process_region(message: types.Message, state: FSMContext):
     data = await state.get_data()
     region = message.text.title()
     area = AREAS.get(region, AREAS["Нижний Новгород"])
     
-    await message.answer("🔍 *Ищу на HH.ru + SuperJob*
-💾 Проверяю кэш...")
+    await state.update_data(area=area, region=region)
+    await message.answer("🔍 Ищу на HH.ru + SuperJob...")
     
-    # 1. Проверяем кэш
-    cached = get_cached_vacancies(data["profession"])
-    if cached is not None and len(cached) > 10:
-        df = cached
-        await message.answer(f"📦 Использую кэш ({len(df)} вакансий)")
-    else:
-        # 2. Парсим HH + SuperJob
-        hh_df = parse_hh_vacancies(
-            data["profession"], area["hh"],
-            data.get("salary_from"), data.get("salary_to")
-        )
-        sj_df = parse_superjob_vacancies(
-            data["profession"], area.get("sj"),
-            data.get("salary_from"), data.get("salary_to")
-        )
+    # Выполняем поиск
+    profession = data.get("profession", "")
+    salary_from = data.get("salary_from")
+    salary_to = data.get("salary_to")
+    
+    try:
+        # Проверяем кэш
+        cached = get_cached_vacancies(profession)
         
-        df = pd.concat([hh_df, sj_df], ignore_index=True)
-        cache_vacancies(df)  # Сохраняем
+        if cached is not None and not cached.empty:
+            df = cached
+        else:
+            # Парсим с HH и SuperJob
+            hh_df = parse_hh_vacancies(profession, area=area.get("hh"), salary_from=salary_from, salary_to=salary_to)
+            sj_df = parse_superjob_vacancies(profession, town_id=area.get("sj", 4), payment_from=salary_from, payment_to=salary_to)
+            
+            df = pd.concat([hh_df, sj_df], ignore_index=True)
+            
+            if not df.empty:
+                cache_vacancies(df)
         
-        await message.answer(f"✅ Найдено {len(df)} вакансий")
+        if df.empty:
+            await message.answer("Вакансии не найдены")
+        else:
+            # Кластеризация
+            df = cluster_vacancies(df)
+            
+            # Формируем ответ
+            result = f"📋 Найдено: {len(df)} вакансий\n\n"
+            for level in ["Junior", "Middle", "Senior", "mixed", "unknown"]:
+                level_df = df[df['cluster'] == level]
+                if not level_df.empty:
+                    result += f"<b>{level}</b>: {len(level_df)} вакансий\n"
+            
+            await message.answer(result)
+            
+            # Показываем первые результаты
+            for _, vac in df.head(5).iterrows():
+                await message.answer(
+                    f"🔹 {vac['name']}\n"
+                    f"💰 {vac.get('salary', 'N/A')}₽\n"
+                    f"🏢 {vac.get('company', 'N/A')}\n"
+                    f"📍 {vac.get('source', '?')}"
+                )
+                
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        await message.answer(f"Ошибка поиска: {e}")
     
-    # 3. ML кластеризация
-    df_clustered = cluster_vacancies(df)
-    
-    # 4. Статистика
-    salary_stats = df["salary"].describe()
-    clusters_stats = df_clustered["cluster"].value_counts()
-    
-    stats_text = (
-        f"📊 *{len(df)} вакансий*
-
-"
-        f"💰 Медиана: *{salary_stats['50%']:,.0f} ₽*
-"
-        f"📈 Диапазон: {salary_stats['min']:,.0f} - {salary_stats['max']:,.0f} ₽
-
-"
-        f"🎯 Кластеры сложности:
-"
-    )
-    for cluster, count in clusters_stats.items():
-        avg_salary = df_clustered[df_clustered["cluster"] == cluster]["salary"].mean()
-        stats_text += f"• *{cluster}*: {count} ({avg_salary:,.0f} ₽)
-"
-    
-    await message.answer(stats_text, parse_mode="Markdown")
-    
-    # Топ по кластерам
-    for cluster in ["Senior", "Middle", "Junior"]:
-        cluster_vacs = df_clustered[df_clustered["cluster"] == cluster].head(2)
-        if not cluster_vacs.empty:
-            text = f"🏆 *{cluster}* ({len(cluster_vacs)} вакансий)
-
-"
-            for _, vac in cluster_vacs.iterrows():
-                text += f"*{vac['name']}*
-`{vac['company']}` | {vac['salary']:,} ₽
-"
-                text += f"[ссылка]({vac['url']})
-
-"
-            await message.answer(text, parse_mode="Markdown", disable_web_page_preview=True)
-    
+    # Завершаем состояние
     await state.clear()
+    await state.set_state(None)
 
 async def main():
     init_db()

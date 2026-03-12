@@ -1,0 +1,7 @@
+aiogram>=3.0.0
+psycopg2-binary
+requests
+pandas
+numpy
+scikit-learn
+python-dotenv
