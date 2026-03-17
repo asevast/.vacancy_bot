@@ -1,6 +1,6 @@
 ﻿$token = $env:BOT_TOKEN
 
-# РџСЂРѕРІРµСЂРєР° webhook
+# Проверка webhook
 Write-Host "Checking webhook status..."
 try {
     $response = Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/getWebhookInfo" -TimeoutSec 10
