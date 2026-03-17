@@ -698,7 +698,8 @@ async def search_command(message: types.Message):
             "Для пошагового уточнения используйте /start."
         )
         return
-    
+
+    user_id = getattr(getattr(message, "from_user", None), "id", None)
     if user_id is not None:
         now = time.monotonic()
         last = _search_cooldown.get(user_id, 0.0)
