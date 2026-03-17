@@ -12,6 +12,11 @@ from app.config import (
     logger
 )
 
+# NOTE: LIST_STORE is intentionally in-memory.
+# Limitations:
+#   - All pagination tokens are lost on bot restart.
+#   - Not safe for multi-process / webhook deployments.
+# Future: replace with Redis or a DB-backed token table.
 LIST_STORE = {}
 
 

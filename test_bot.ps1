@@ -1,4 +1,4 @@
-$token = "963650906:AAFZxqZJH_iZaRw6icp63cmMmTr6P971PYE"
+﻿$token = $env:BOT_TOKEN
 
 # Проверка webhook
 Write-Host "Checking webhook status..."
