@@ -1,6 +1,8 @@
 import asyncio
 import sys
 import re
+import functools
+import time
 from datetime import datetime, timedelta
 import pandas as pd
 
@@ -77,8 +79,12 @@ AREAS = {
     "Все": {"hh": 113, "sj": None}
 }
 
+_search_cooldown: dict[int, float] = {}
+_SEARCH_COOLDOWN_SECONDS = 10
+
 
 def log_callback(func):
+    @functools.wraps(func)
     async def wrapper(callback: types.CallbackQuery, state: FSMContext = None):
         user = callback.from_user
         logger.info(f"CALLBACK | {user.full_name} (@{user.username or 'N/A'}) | {callback.data}")
@@ -89,6 +95,7 @@ def log_callback(func):
 
 
 def log_message(func):
+    @functools.wraps(func)
     async def wrapper(message: types.Message, state: FSMContext = None):
         user = message.from_user
         logger.info(f"MESSAGE | {user.full_name} (@{user.username or 'N/A'}) | {message.text}")
@@ -185,7 +192,6 @@ async def send_subscription_digest(bot_instance, sub_row):
 
     if df is None or df.empty:
         await bot_instance.send_message(user_id, f"Нет новых вакансий для '{profession}' с прошлого дайджеста.")
-        update_subscription_last_sent(sub_id)
         return
 
     df = cluster_vacancies(df)
@@ -225,6 +231,11 @@ async def subscription_worker(bot_instance):
             if not subs_df.empty:
                 for _, sub_row in subs_df.iterrows():
                     try:
+                        last_sent_at = sub_row.get("last_sent_at")
+                        if pd.notna(last_sent_at):
+                            elapsed = (datetime.utcnow() - pd.Timestamp(last_sent_at).to_pydatetime()).total_seconds()
+                            if elapsed < SUBSCRIPTION_POLL_SECONDS:
+                                continue
                         await send_subscription_digest(bot_instance, sub_row)
                     except Exception as e:
                         logger.error(f"SUBSCRIPTION ERROR | {e}")
@@ -688,12 +699,20 @@ async def search_command(message: types.Message):
         )
         return
     
+    if user_id is not None:
+        now = time.monotonic()
+        last = _search_cooldown.get(user_id, 0.0)
+        if now - last < _SEARCH_COOLDOWN_SECONDS:
+            remaining = int(_SEARCH_COOLDOWN_SECONDS - (now - last))
+            await message.answer(f"?????????????????? {remaining} ??????. ?????????? ?????????????????? ??????????????.")
+            return
+        _search_cooldown[user_id] = now
+
     logger.info(f"QUICK SEARCH | {message.from_user.full_name} | {profession} | {opts}")
     
     await message.answer(f"Ищу: {profession}...")
     
     try:
-        user_id = getattr(getattr(message, "from_user", None), "id", None)
         profile = _safe_get_profile(user_id)
         defaults = {
             "region": profile.get("region") if profile else None,
@@ -799,7 +818,6 @@ async def search_command(message: types.Message):
             
             df = pd.concat([hh_df, sj_df, habr_df, jooble_df, adzuna_df, agg_df], ignore_index=True)
 
-            df = _apply_profile_filters(df, level=level, work_format=work_format, technologies=technologies)
             
             if not df.empty:
                 safe_cache_vacancies(df)
@@ -818,10 +836,10 @@ async def search_command(message: types.Message):
                 df = df.sort_values(by="salary", ascending=False, na_position="last")
             
             result = f"Найдено вакансий: {len(df)}\n\n"
-            for level in ["Junior", "Middle", "Senior", "mixed", "unknown"]:
-                level_df = df[df['cluster'] == level]
+            for cluster_label in ["Junior", "Middle", "Senior", "mixed", "unknown"]:
+                level_df = df[df["cluster"] == cluster_label]
                 if not level_df.empty:
-                    result += f"{level}: {len(level_df)}\n"
+                    result += f"{cluster_label}: {len(level_df)}\n"
             
             await message.answer(result)
             
@@ -1143,10 +1161,10 @@ async def process_search_confirmation(message: types.Message, state: FSMContext)
             df = cluster_vacancies(df)
             
             result = f"Найдено вакансий: {len(df)}\n\n"
-            for level in ["Junior", "Middle", "Senior", "mixed", "unknown"]:
-                level_df = df[df['cluster'] == level]
+            for cluster_label in ["Junior", "Middle", "Senior", "mixed", "unknown"]:
+                level_df = df[df["cluster"] == cluster_label]
                 if not level_df.empty:
-                    result += f"{level}: {len(level_df)}\n"
+                    result += f"{cluster_label}: {len(level_df)}\n"
             
             await message.answer(result)
             if profile:

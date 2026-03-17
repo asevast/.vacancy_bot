@@ -85,8 +85,8 @@ def parse_hh_vacancies(
             salary_rub = 0
             
             if salary and isinstance(salary, dict):
-                currency = salary.get("currency")
-                if currency == "RUR":
+                salary_currency = salary.get("currency")
+                if salary_currency == "RUR":
                     from_val = salary.get("from")
                     to_val = salary.get("to")
                     if from_val and to_val:
@@ -99,8 +99,6 @@ def parse_hh_vacancies(
             snippet = vac.get("snippet") or {}
             snippet_req = snippet.get("requirement") or ""
             snippet_resp = snippet.get("responsibility") or ""
-            desc = str(snippet_req) + " " + str(snippet_resp)
-            
             skills = [s["name"] for s in vac.get("key_skills", [])]
             desc = str(snippet_req) + " " + str(snippet_resp)
             
@@ -465,16 +463,4 @@ def parse_adzuna_vacancies(text, count=50, region_label=None):
         raise ConnectionError(f"Connection error with Adzuna: {e}")
     except Exception as e:
         logger.error(f"Adzuna UNEXPECTED | {e}")
-        raise
-    except Timeout:
-        logger.error(f"SuperJob TIMEOUT | text='{text}'")
-        raise TimeoutError("Timeout when requesting SuperJob. Try again later.")
-    except SSLError as e:
-        logger.error(f"SuperJob SSL ERROR | {e}")
-        raise ConnectionError(f"SSL error with SuperJob: {e}")
-    except RequestException as e:
-        logger.error(f"SuperJob ERROR | {e}")
-        raise ConnectionError(f"Connection error with SuperJob: {e}")
-    except Exception as e:
-        logger.error(f"SuperJob UNEXPECTED | {e}")
         raise

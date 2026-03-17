@@ -110,6 +110,13 @@ jobs:
         flake8 vacancy_bot.py --count --max-line-length=120 --statistics
     
     - name: Check imports
+      env:
+        BOT_TOKEN: "1234567890:AAFakeTokenForLintCheckOnly1234567890ab"
+        DB_HOST: localhost
+        DB_PORT: "5432"
+        DB_NAME: test_vacancy_bot
+        DB_USER: test_user
+        DB_PASS: test_password
       run: |
         python -c "import vacancy_bot; print('Import successful')"
 

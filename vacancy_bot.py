@@ -1,6 +1,6 @@
 import asyncio
 
-from app.config import (
+from app.config import (  # noqa: F401
     BOT_TOKEN,
     KILO_AUTO_API_KEY,
     KILO_AUTO_API_URL,
@@ -27,14 +27,14 @@ from app.config import (
     ADZUNA_COUNTRY,
     logger
 )
-from app.context import bot, dp
-from app.utils import (
+from app.context import bot, dp  # noqa: F401
+from app.utils import (  # noqa: F401
     parse_search_options,
     normalize_region_input,
     needs_clarification,
     apply_clarification
 )
-from app.db import (
+from app.db import (  # noqa: F401
     get_db_connection,
     init_db,
     cache_vacancies,
@@ -46,7 +46,7 @@ from app.db import (
     deactivate_subscription,
     update_subscription_last_sent
 )
-from app.api import (
+from app.api import (  # noqa: F401
     parse_hh_vacancies,
     parse_superjob_vacancies,
     parse_habr_vacancies,
@@ -54,9 +54,9 @@ from app.api import (
     parse_jooble_vacancies,
     parse_adzuna_vacancies
 )
-from app.ml import cluster_vacancies
-from app.ai import ask_kilo_auto
-from app.lists import (
+from app.ml import cluster_vacancies  # noqa: F401
+from app.ai import ask_kilo_auto  # noqa: F401
+from app.lists import (  # noqa: F401
     LIST_STORE,
     create_list_token,
     get_list_items,
@@ -66,8 +66,8 @@ from app.lists import (
     list_page_handler,
     start_web_server
 )
-from app.analytics import compute_market_stats, format_market_stats
-from app.handlers import (
+from app.analytics import compute_market_stats, format_market_stats  # noqa: F401
+from app.handlers import (  # noqa: F401
     AREAS,
     SearchForm,
     AIForm,

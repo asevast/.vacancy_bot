@@ -45,14 +45,6 @@ os.environ["DB_PASS"] = "test_password"
 # ==============================================================================
 
 @pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
 def mock_env_vars():
     """
     Mock environment variables for testing.
